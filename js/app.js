@@ -65,6 +65,11 @@ const TEXTS = {
     levelUp: 'Niveau omhoog!',
     levelDown: 'Iets makkelijker nu',
     difficultyAdjusted: 'Moeilijkheid aangepast',
+    checking: 'Even denken...',
+    aiApiKey: 'AI Sleutel (Gemini)',
+    aiApiKeyPlaceholder: 'Plak je Gemini API key hier',
+    aiApiKeyHelp: 'Gratis op aistudio.google.com',
+    aiEnabled: 'Slim antwoorden checken',
   },
   en: {
     appTitle: 'Woordspel',
@@ -126,6 +131,11 @@ const TEXTS = {
     levelUp: 'Level up!',
     levelDown: 'Taking it easier now',
     difficultyAdjusted: 'Difficulty adjusted',
+    checking: 'Thinking...',
+    aiApiKey: 'AI Key (Gemini)',
+    aiApiKeyPlaceholder: 'Paste your Gemini API key here',
+    aiApiKeyHelp: 'Free at aistudio.google.com',
+    aiEnabled: 'Smart answer checking',
   },
 };
 
@@ -220,6 +230,53 @@ function wordFormsMatch(input, target) {
     }
   }
   return false;
+}
+
+// AI-based answer checking using Gemini API (free tier)
+async function checkAnswerWithAI(answer, target, alts, lang, exerciseType) {
+  const settings = AppStorage.getSettings();
+  const apiKey = settings.aiApiKey;
+  if (!apiKey) return null;
+
+  const langName = lang === 'nl' ? 'Dutch' : 'English';
+  const allWords = [target, ...(alts || [])].join(', ');
+  let context = '';
+  if (exerciseType === 'picture') {
+    context = `This is a picture naming exercise. The patient sees an image/emoji representing "${target}" and must name what they see.`;
+  } else if (exerciseType === 'sentence') {
+    context = `This is a fill-in-the-blank sentence exercise. The expected answer is "${target}".`;
+  } else {
+    context = `This is a word repetition exercise. The target word is "${target}".`;
+  }
+
+  const prompt = `You are checking answers in a ${langName} word-finding exercise for aphasia therapy.
+${context}
+Target word: "${target}"
+Also accepted: ${allWords}
+Patient answered: "${answer}"
+
+Is this a reasonable and correct answer? Consider synonyms, visual descriptions of the same thing, informal versions, plural/singular/diminutive forms, and related words that describe the same concept.
+Answer ONLY "YES" or "NO".`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 5, temperature: 0 }
+        })
+      }
+    );
+    const data = await resp.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toUpperCase();
+    return text?.startsWith('YES') || false;
+  } catch (e) {
+    console.warn('AI check failed:', e);
+    return null;
+  }
 }
 
 function getProgressiveHints(word, hintLevel) {
@@ -457,10 +514,18 @@ function PictureNaming({ settings, onFinish }) {
   const currentWord = words[currentIndex];
   const isRoundComplete = currentIndex >= words.length;
 
-  const checkAnswer = useCallback((answer) => {
+  const checkAnswer = useCallback(async (answer) => {
     if (!answer || feedback) return;
     const allValid = [currentWord.word, ...(currentWord.alts || [])];
-    const isCorrect = allValid.some(valid => wordFormsMatch(answer, valid));
+    let isCorrect = allValid.some(valid => wordFormsMatch(answer, valid));
+
+    // If local match fails, try AI check
+    if (!isCorrect && settings.aiApiKey) {
+      setFeedback('checking');
+      const aiResult = await checkAnswerWithAI(answer, currentWord.word, currentWord.alts || [], settings.language, 'picture');
+      if (aiResult === true) isCorrect = true;
+    }
+
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
@@ -530,6 +595,13 @@ function PictureNaming({ settings, onFinish }) {
         <div className="prompt-category">{currentWord.category}</div>
         <div className="prompt-text">{t.whatIsThis}</div>
       </div>
+
+      {feedback === 'checking' && (
+        <div className="feedback" style={{ textAlign: 'center', padding: '20px' }}>
+          <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>🤔</div>
+          <div style={{ color: 'var(--text-muted)' }}>{t.checking}</div>
+        </div>
+      )}
 
       {!feedback && (
         <>
@@ -614,11 +686,18 @@ function SentenceFill({ settings, onFinish }) {
   const currentSentence = sentences[currentIndex];
   const isRoundComplete = currentIndex >= sentences.length;
 
-  const checkAnswer = useCallback((answer) => {
+  const checkAnswer = useCallback(async (answer) => {
     if (!answer || feedback) return;
     // Check against primary answer AND all alternates
     const allAnswers = [currentSentence.answer, ...(currentSentence.alts || [])];
-    const isCorrect = allAnswers.some(valid => wordFormsMatch(answer, valid));
+    let isCorrect = allAnswers.some(valid => wordFormsMatch(answer, valid));
+
+    if (!isCorrect && settings.aiApiKey) {
+      setFeedback('checking');
+      const aiResult = await checkAnswerWithAI(answer, currentSentence.answer, currentSentence.alts || [], settings.language, 'sentence');
+      if (aiResult === true) isCorrect = true;
+    }
+
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
@@ -687,6 +766,13 @@ function SentenceFill({ settings, onFinish }) {
           {parts[0]}<span className="blank">{input || '?'}</span>{parts[1] || ''}
         </div>
       </div>
+
+      {feedback === 'checking' && (
+        <div className="feedback" style={{ textAlign: 'center', padding: '20px' }}>
+          <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>🤔</div>
+          <div style={{ color: 'var(--text-muted)' }}>{t.checking}</div>
+        </div>
+      )}
 
       {!feedback && (
         <>
@@ -777,8 +863,15 @@ function WordRepeat({ settings, onFinish }) {
     setHasListened(true);
   };
 
-  const handleSpeechResult = (transcript) => {
-    const isCorrect = wordFormsMatch(transcript, currentWord.word);
+  const handleSpeechResult = async (transcript) => {
+    let isCorrect = wordFormsMatch(transcript, currentWord.word);
+
+    if (!isCorrect && settings.aiApiKey) {
+      setFeedback('checking');
+      const aiResult = await checkAnswerWithAI(transcript, currentWord.word, currentWord.alts || [], settings.language, 'repeat');
+      if (aiResult === true) isCorrect = true;
+    }
+
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
@@ -1085,6 +1178,29 @@ function SettingsScreen({ settings, onUpdateSettings }) {
           <button className={`setting-option ${!settings.soundEnabled ? 'active' : ''}`} onClick={() => update('soundEnabled', false)}>
             🔇 {t.off}
           </button>
+        </div>
+      </div>
+
+      <div className="setting-group">
+        <label>{t.aiApiKey}</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <input
+            type="password"
+            className="text-input"
+            value={settings.aiApiKey || ''}
+            onChange={e => update('aiApiKey', e.target.value.trim())}
+            placeholder={t.aiApiKeyPlaceholder}
+            style={{ fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' }}
+            autoComplete="off"
+          />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            {t.aiApiKeyHelp} — <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style={{ color: 'var(--primary)' }}>aistudio.google.com/apikey</a>
+          </div>
+          {settings.aiApiKey && (
+            <div style={{ fontSize: '0.8rem', color: '#4CAF50', fontWeight: '600' }}>
+              ✓ {t.aiEnabled}
+            </div>
+          )}
         </div>
       </div>
 
