@@ -170,6 +170,58 @@ function fuzzyMatch(input, target) {
   return false;
 }
 
+// Smart word matching: accepts plural, diminutive, article prefixes, verb forms
+function wordFormsMatch(input, target) {
+  const a = input.toLowerCase().trim();
+  const b = target.toLowerCase().trim();
+  if (fuzzyMatch(a, b)) return true;
+
+  // Strip articles (de/het/een / the/a/an)
+  const stripArticle = s => s.replace(/^(de|het|een|the|a|an)\s+/, '');
+  if (fuzzyMatch(stripArticle(a), stripArticle(b))) return true;
+
+  // Check if one is a common form of the other
+  const forms = w => {
+    const f = [w];
+    // Dutch plurals
+    f.push(w + 'en', w + 's', w + "'s", w + 'n');
+    // Double consonant plurals (kat->katten, bed->bedden)
+    if (w.length >= 2) f.push(w + w[w.length - 1] + 'en');
+    // Diminutives
+    f.push(w + 'je', w + 'tje', w + 'pje', w + 'etje');
+    // Strip plural/diminutive to get stem
+    if (w.endsWith('en') && w.length > 3) f.push(w.slice(0, -2));
+    if (w.endsWith('s') && w.length > 2) f.push(w.slice(0, -1));
+    if (w.endsWith("'s") && w.length > 3) f.push(w.slice(0, -2));
+    if (w.endsWith('n') && w.length > 2) f.push(w.slice(0, -1));
+    if (w.endsWith('je') && w.length > 3) f.push(w.slice(0, -2));
+    if (w.endsWith('tje') && w.length > 4) f.push(w.slice(0, -3));
+    if (w.endsWith('jes') && w.length > 4) f.push(w.slice(0, -3));
+    // Double consonant stem (katten->kat, bedden->bed)
+    if (w.endsWith('en') && w.length > 4 && w[w.length - 3] === w[w.length - 4]) {
+      f.push(w.slice(0, -3));
+    }
+    // English plurals
+    if (w.endsWith('es') && w.length > 3) f.push(w.slice(0, -2));
+    if (w.endsWith('ies') && w.length > 4) f.push(w.slice(0, -3) + 'y');
+    // English -ing / -ed
+    if (w.endsWith('ing') && w.length > 4) f.push(w.slice(0, -3), w.slice(0, -3) + 'e');
+    if (w.endsWith('ed') && w.length > 3) f.push(w.slice(0, -2), w.slice(0, -1));
+    return f;
+  };
+
+  const aForms = forms(a);
+  const bForms = forms(b);
+  // Check if any form of input matches any form of target
+  for (const af of aForms) {
+    for (const bf of bForms) {
+      if (af === bf) return true;
+      if (af.length > 3 && bf.length > 3 && fuzzyMatch(af, bf)) return true;
+    }
+  }
+  return false;
+}
+
 function getProgressiveHints(word, hintLevel) {
   switch (hintLevel) {
     case 0: return null; // No hint yet
@@ -407,7 +459,8 @@ function PictureNaming({ settings, onFinish }) {
 
   const checkAnswer = useCallback((answer) => {
     if (!answer || feedback) return;
-    const isCorrect = fuzzyMatch(answer, currentWord.word);
+    const allValid = [currentWord.word, ...(currentWord.alts || [])];
+    const isCorrect = allValid.some(valid => wordFormsMatch(answer, valid));
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
@@ -560,7 +613,7 @@ function SentenceFill({ settings, onFinish }) {
     if (!answer || feedback) return;
     // Check against primary answer AND all alternates
     const allAnswers = [currentSentence.answer, ...(currentSentence.alts || [])];
-    const isCorrect = allAnswers.some(valid => fuzzyMatch(answer, valid));
+    const isCorrect = allAnswers.some(valid => wordFormsMatch(answer, valid));
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
@@ -720,7 +773,7 @@ function WordRepeat({ settings, onFinish }) {
   };
 
   const handleSpeechResult = (transcript) => {
-    const isCorrect = fuzzyMatch(transcript, currentWord.word);
+    const isCorrect = wordFormsMatch(transcript, currentWord.word);
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
 
