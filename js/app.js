@@ -574,6 +574,11 @@ function PictureNaming({ settings, onFinish }) {
               ? t.encouragements[Math.floor(Math.random() * t.encouragements.length)]
               : t.incorrect}
           </div>
+          {feedback === 'correct' && (
+            <div className="feedback-answer" style={{ fontSize: '1.3rem', fontWeight: '700', color: 'var(--text)', marginTop: '4px' }}>
+              {currentWord.emoji} {currentWord.word}
+            </div>
+          )}
           {feedback === 'incorrect' && (
             <div className="feedback-answer">{t.theAnswerWas} <strong>{currentWord.word}</strong></div>
           )}
