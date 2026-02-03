@@ -4,6 +4,7 @@ window.AppStorage = {
     SETTINGS: 'woordspel_settings',
     SESSIONS: 'woordspel_sessions',
     STATS: 'woordspel_stats',
+    MASTERED: 'woordspel_mastered',
   },
 
   // === SETTINGS ===
@@ -121,10 +122,35 @@ window.AppStorage = {
     });
   },
 
+  // === MASTERED WORDS (correctly answered, don't repeat) ===
+  getMasteredWords() {
+    try {
+      return JSON.parse(localStorage.getItem(this.KEYS.MASTERED)) || [];
+    } catch {
+      return [];
+    }
+  },
+
+  addMasteredWord(word) {
+    const mastered = this.getMasteredWords();
+    const w = word.toLowerCase().trim();
+    if (!mastered.includes(w)) {
+      mastered.push(w);
+      // Keep last 500 max to avoid unbounded growth
+      if (mastered.length > 500) mastered.splice(0, mastered.length - 500);
+      localStorage.setItem(this.KEYS.MASTERED, JSON.stringify(mastered));
+    }
+  },
+
+  clearMasteredWords() {
+    localStorage.removeItem(this.KEYS.MASTERED);
+  },
+
   // Clear all data
   clearAll() {
     localStorage.removeItem(this.KEYS.SETTINGS);
     localStorage.removeItem(this.KEYS.SESSIONS);
     localStorage.removeItem(this.KEYS.STATS);
+    localStorage.removeItem(this.KEYS.MASTERED);
   },
 };

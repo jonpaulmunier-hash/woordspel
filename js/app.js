@@ -66,6 +66,8 @@ const TEXTS = {
     levelDown: 'Iets makkelijker nu',
     difficultyAdjusted: 'Moeilijkheid aangepast',
     checking: 'Even denken...',
+    loading: 'Woorden verzamelen...',
+    loadingImages: 'Plaatjes zoeken...',
     aiApiKey: 'AI Sleutel (Gemini)',
     aiApiKeyPlaceholder: 'Plak je Gemini API key hier',
     aiApiKeyHelp: 'Gratis op aistudio.google.com',
@@ -132,6 +134,8 @@ const TEXTS = {
     levelDown: 'Taking it easier now',
     difficultyAdjusted: 'Difficulty adjusted',
     checking: 'Thinking...',
+    loading: 'Gathering words...',
+    loadingImages: 'Finding images...',
     aiApiKey: 'AI Key (Gemini)',
     aiApiKeyPlaceholder: 'Paste your Gemini API key here',
     aiApiKeyHelp: 'Free at aistudio.google.com',
@@ -275,6 +279,129 @@ Answer ONLY "YES" or "NO".`;
     return text?.startsWith('YES') || false;
   } catch (e) {
     console.warn('AI check failed:', e);
+    return null;
+  }
+}
+
+// Search Wikipedia for an image matching a search term
+async function searchWikipediaImage(searchTerm) {
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json&origin=*&gsrlimit=1`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const pages = data?.query?.pages;
+    if (!pages) return null;
+    const firstPage = Object.values(pages)[0];
+    return firstPage?.thumbnail?.source || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Generate random words using Gemini AI
+async function generateAIWords(lang, difficulty, count, exclude) {
+  const settings = AppStorage.getSettings();
+  const apiKey = settings.aiApiKey;
+  if (!apiKey) return null;
+
+  const langName = lang === 'nl' ? 'Dutch' : 'English';
+  const excludeList = exclude && exclude.length > 0
+    ? `\nDo NOT use any of these words: ${exclude.join(', ')}`
+    : '';
+  const diffDesc = difficulty === 'easy'
+    ? 'very common everyday words (simple nouns: animals, food, household objects, body parts, clothing, vehicles, nature)'
+    : difficulty === 'medium'
+    ? 'moderately common words (nouns and some verbs: kitchen items, sports, professions, weather, furniture, musical instruments)'
+    : 'less common but recognizable words (compound nouns, specific objects, abstract-but-visual concepts)';
+
+  const prompt = `Generate ${count} random ${langName} words for a picture-naming word-finding exercise for aphasia therapy.
+Difficulty: ${difficulty} - ${diffDesc}
+Each word MUST be something that can be clearly shown in a single photograph.${excludeList}
+
+Return ONLY a JSON array, no markdown, no explanation:
+[{"word":"hond","article":"de","category":"Dieren","emoji":"🐕","imageSearch":"dog"}]
+
+Rules:
+- "word" is the ${langName} word
+- "article" is "de", "het", or "" (for verbs/adjectives)
+- "category" is a ${langName} category name
+- "emoji" is one relevant emoji
+- "imageSearch" is a simple English word/phrase for finding a photo on Wikipedia
+- Mix different categories
+- Only concrete, photographable things`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 1000, temperature: 1.0 }
+        })
+      }
+    );
+    const data = await resp.json();
+    let text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) return null;
+    // Strip markdown code fences if present
+    text = text.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+    const words = JSON.parse(text);
+    if (!Array.isArray(words) || words.length === 0) return null;
+    return words;
+  } catch (e) {
+    console.warn('AI word generation failed:', e);
+    return null;
+  }
+}
+
+// Generate random sentences using Gemini AI
+async function generateAISentences(lang, difficulty, count, exclude) {
+  const settings = AppStorage.getSettings();
+  const apiKey = settings.aiApiKey;
+  if (!apiKey) return null;
+
+  const langName = lang === 'nl' ? 'Dutch' : 'English';
+  const excludeList = exclude && exclude.length > 0
+    ? `\nDo NOT use these answers: ${exclude.join(', ')}`
+    : '';
+
+  const prompt = `Generate ${count} random ${langName} fill-in-the-blank sentences for aphasia therapy.
+Difficulty: ${difficulty}${excludeList}
+
+Return ONLY a JSON array, no markdown:
+[{"sentence":"De hond ___","answer":"blaft","hint":"Wat doet een hond?","alts":["blafte","bijt"]}]
+
+Rules:
+- "sentence" has exactly one ___ blank
+- "answer" is the primary expected word
+- "hint" is a helpful clue
+- "alts" are other acceptable answers (2-5 alternatives)
+- Mix topics: daily life, nature, food, family, work, hobbies
+- Keep sentences simple and clear for aphasia patients`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 1500, temperature: 1.0 }
+        })
+      }
+    );
+    const data = await resp.json();
+    let text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) return null;
+    text = text.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+    const sentences = JSON.parse(text);
+    if (!Array.isArray(sentences) || sentences.length === 0) return null;
+    return sentences;
+  } catch (e) {
+    console.warn('AI sentence generation failed:', e);
     return null;
   }
 }
@@ -462,15 +589,15 @@ function HintBar({ word, lang, hintLevel, onRequestHint, maxHints }) {
 }
 
 // --- IMAGE DISPLAY ---
-function ImageDisplay({ word, emoji, lang }) {
+function ImageDisplay({ word, emoji, lang, imageUrl: dynamicUrl }) {
   const [imgError, setImgError] = useState(false);
   const map = window.IMAGE_MAP || {};
-  const imageUrl = map[word];
+  const finalUrl = dynamicUrl || map[word];
 
-  // Reset error state when word changes
-  useEffect(() => { setImgError(false); }, [word]);
+  // Reset error state when word or URL changes
+  useEffect(() => { setImgError(false); }, [word, dynamicUrl]);
 
-  if (!imageUrl || imgError) {
+  if (!finalUrl || imgError) {
     return (
       <div className="prompt-image-container">
         <div className="prompt-emoji">{emoji}</div>
@@ -482,7 +609,7 @@ function ImageDisplay({ word, emoji, lang }) {
     <div className="prompt-image-container">
       <img
         className="prompt-image"
-        src={imageUrl}
+        src={finalUrl}
         alt=""
         onError={() => setImgError(true)}
       />
@@ -497,13 +624,10 @@ function PictureNaming({ settings, onFinish }) {
   const categories = Object.values(data.categories);
   const ROUND_SIZE = 8;
 
-  const [words, setWords] = useState(() => {
-    const allWords = categories.flatMap(cat =>
-      getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
-    );
-    return shuffleArray(allWords).slice(0, ROUND_SIZE);
-  });
-
+  const [words, setWords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMsg, setLoadingMsg] = useState('');
+  const [roundKey, setRoundKey] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null);
@@ -511,11 +635,58 @@ function PictureNaming({ settings, onFinish }) {
   const [results, setResults] = useState([]);
   const inputRef = useRef(null);
 
+  // Load words: AI-generated or local fallback
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWords() {
+      setLoading(true);
+      setLoadingMsg(t.loading);
+      setCurrentIndex(0);
+      setResults([]);
+      setFeedback(null);
+      setInput('');
+      setHintLevel(0);
+
+      const mastered = AppStorage.getMasteredWords();
+
+      // Try AI generation when API key is set
+      if (settings.aiApiKey) {
+        const aiWords = await generateAIWords(settings.language, settings.difficulty, ROUND_SIZE, mastered);
+        if (!cancelled && aiWords && aiWords.length > 0) {
+          setLoadingMsg(t.loadingImages);
+          // Fetch Wikipedia images in parallel
+          const withImages = await Promise.all(aiWords.map(async (w) => {
+            const imgUrl = await searchWikipediaImage(w.imageSearch);
+            return { ...w, imageUrl: imgUrl };
+          }));
+          if (!cancelled) {
+            setWords(withImages);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      // Fallback: local words, filtering out mastered
+      if (!cancelled) {
+        const allWords = categories.flatMap(cat =>
+          getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
+        );
+        const available = allWords.filter(w => !mastered.includes(w.word.toLowerCase()));
+        const pool = available.length >= ROUND_SIZE ? available : allWords;
+        setWords(shuffleArray(pool).slice(0, ROUND_SIZE));
+        setLoading(false);
+      }
+    }
+    loadWords();
+    return () => { cancelled = true; };
+  }, [roundKey]);
+
   const currentWord = words[currentIndex];
-  const isRoundComplete = currentIndex >= words.length;
+  const isRoundComplete = !loading && words.length > 0 && currentIndex >= words.length;
 
   const checkAnswer = useCallback(async (answer) => {
-    if (!answer || feedback) return;
+    if (!answer || feedback || !currentWord) return;
     const allValid = [currentWord.word, ...(currentWord.alts || [])];
     let isCorrect = allValid.some(valid => wordFormsMatch(answer, valid));
 
@@ -528,6 +699,11 @@ function PictureNaming({ settings, onFinish }) {
 
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
+
+    // Mark correctly answered words as mastered
+    if (isCorrect) {
+      AppStorage.addMasteredWord(currentWord.word);
+    }
 
     const stats = AppStorage.recordAnswer(isCorrect);
 
@@ -556,6 +732,18 @@ function PictureNaming({ settings, onFinish }) {
     checkAnswer(transcript);
   };
 
+  // Loading screen
+  if (loading) {
+    return (
+      <div className="exercise" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="loading-spinner" style={{ fontSize: '2.5rem', marginBottom: '16px', animation: 'spin 1.5s linear infinite' }}>🔄</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{loadingMsg}</div>
+        </div>
+      </div>
+    );
+  }
+
   if (isRoundComplete) {
     const score = results.filter(Boolean).length;
     AppStorage.saveSession({
@@ -566,17 +754,11 @@ function PictureNaming({ settings, onFinish }) {
       language: settings.language,
     });
     return <ResultScreen score={score} total={words.length} onHome={() => onFinish()} onRetry={() => {
-      const allWords = categories.flatMap(cat =>
-        getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
-      );
-      setWords(shuffleArray(allWords).slice(0, ROUND_SIZE));
-      setCurrentIndex(0);
-      setResults([]);
-      setFeedback(null);
-      setInput('');
-      setHintLevel(0);
+      setRoundKey(k => k + 1);
     }} settings={settings} />;
   }
+
+  if (!currentWord) return null;
 
   return (
     <div className="exercise">
@@ -591,7 +773,7 @@ function PictureNaming({ settings, onFinish }) {
       </div>
 
       <div className="exercise-prompt">
-        <ImageDisplay word={currentWord.word} emoji={currentWord.emoji} lang={settings.language} />
+        <ImageDisplay word={currentWord.word} emoji={currentWord.emoji} lang={settings.language} imageUrl={currentWord.imageUrl} />
         <div className="prompt-category">{currentWord.category}</div>
         <div className="prompt-text">{t.whatIsThis}</div>
       </div>
@@ -669,26 +851,59 @@ function SentenceFill({ settings, onFinish }) {
   const data = getWordData(settings.language);
   const ROUND_SIZE = 8;
 
-  const [sentences, setSentences] = useState(() => {
-    let pool = [];
-    if (settings.difficulty === 'easy') pool = [...data.sentences.easy];
-    else if (settings.difficulty === 'medium') pool = [...data.sentences.easy, ...data.sentences.medium];
-    else pool = [...data.sentences.easy, ...data.sentences.medium, ...data.sentences.hard];
-    return shuffleArray(pool).slice(0, ROUND_SIZE);
-  });
-
+  const [sentences, setSentences] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [roundKey, setRoundKey] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null);
   const [hintLevel, setHintLevel] = useState(0);
   const [results, setResults] = useState([]);
 
+  // Load sentences: AI-generated or local fallback
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSentences() {
+      setLoading(true);
+      setCurrentIndex(0);
+      setResults([]);
+      setFeedback(null);
+      setInput('');
+      setHintLevel(0);
+
+      const mastered = AppStorage.getMasteredWords();
+
+      // Try AI generation when API key is set
+      if (settings.aiApiKey) {
+        const aiSentences = await generateAISentences(settings.language, settings.difficulty, ROUND_SIZE, mastered);
+        if (!cancelled && aiSentences && aiSentences.length > 0) {
+          setSentences(aiSentences);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Fallback: local sentences, filtering out mastered answers
+      if (!cancelled) {
+        let pool = [];
+        if (settings.difficulty === 'easy') pool = [...data.sentences.easy];
+        else if (settings.difficulty === 'medium') pool = [...data.sentences.easy, ...data.sentences.medium];
+        else pool = [...data.sentences.easy, ...data.sentences.medium, ...data.sentences.hard];
+        const available = pool.filter(s => !mastered.includes(s.answer.toLowerCase()));
+        const finalPool = available.length >= ROUND_SIZE ? available : pool;
+        setSentences(shuffleArray(finalPool).slice(0, ROUND_SIZE));
+        setLoading(false);
+      }
+    }
+    loadSentences();
+    return () => { cancelled = true; };
+  }, [roundKey]);
+
   const currentSentence = sentences[currentIndex];
-  const isRoundComplete = currentIndex >= sentences.length;
+  const isRoundComplete = !loading && sentences.length > 0 && currentIndex >= sentences.length;
 
   const checkAnswer = useCallback(async (answer) => {
-    if (!answer || feedback) return;
-    // Check against primary answer AND all alternates
+    if (!answer || feedback || !currentSentence) return;
     const allAnswers = [currentSentence.answer, ...(currentSentence.alts || [])];
     let isCorrect = allAnswers.some(valid => wordFormsMatch(answer, valid));
 
@@ -700,6 +915,10 @@ function SentenceFill({ settings, onFinish }) {
 
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
+
+    if (isCorrect) {
+      AppStorage.addMasteredWord(currentSentence.answer);
+    }
 
     const stats = AppStorage.recordAnswer(isCorrect);
     if (settings.soundEnabled) {
@@ -722,6 +941,18 @@ function SentenceFill({ settings, onFinish }) {
     setCurrentIndex(prev => prev + 1);
   };
 
+  // Loading screen
+  if (loading) {
+    return (
+      <div className="exercise" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="loading-spinner" style={{ fontSize: '2.5rem', marginBottom: '16px', animation: 'spin 1.5s linear infinite' }}>🔄</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{t.loading}</div>
+        </div>
+      </div>
+    );
+  }
+
   if (isRoundComplete) {
     const score = results.filter(Boolean).length;
     AppStorage.saveSession({
@@ -732,18 +963,11 @@ function SentenceFill({ settings, onFinish }) {
       language: settings.language,
     });
     return <ResultScreen score={score} total={sentences.length} onHome={() => onFinish()} onRetry={() => {
-      let pool = [];
-      if (settings.difficulty === 'easy') pool = [...data.sentences.easy];
-      else if (settings.difficulty === 'medium') pool = [...data.sentences.easy, ...data.sentences.medium];
-      else pool = [...data.sentences.easy, ...data.sentences.medium, ...data.sentences.hard];
-      setSentences(shuffleArray(pool).slice(0, ROUND_SIZE));
-      setCurrentIndex(0);
-      setResults([]);
-      setFeedback(null);
-      setInput('');
-      setHintLevel(0);
+      setRoundKey(k => k + 1);
     }} settings={settings} />;
   }
+
+  if (!currentSentence) return null;
 
   // Render sentence with blank
   const parts = currentSentence.sentence.split('___');
@@ -824,6 +1048,11 @@ function SentenceFill({ settings, onFinish }) {
               ? t.encouragements[Math.floor(Math.random() * t.encouragements.length)]
               : t.incorrect}
           </div>
+          {feedback === 'correct' && (
+            <div className="feedback-answer" style={{ fontSize: '1.3rem', fontWeight: '700', color: 'var(--text)', marginTop: '4px' }}>
+              {currentSentence.answer}
+            </div>
+          )}
           {feedback === 'incorrect' && (
             <div className="feedback-answer">{t.theAnswerWas} <strong>{currentSentence.answer}</strong></div>
           )}
@@ -843,27 +1072,62 @@ function WordRepeat({ settings, onFinish }) {
   const categories = Object.values(data.categories);
   const ROUND_SIZE = 8;
 
-  const [words, setWords] = useState(() => {
-    const allWords = categories.flatMap(cat =>
-      getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
-    );
-    return shuffleArray(allWords).slice(0, ROUND_SIZE);
-  });
-
+  const [words, setWords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [roundKey, setRoundKey] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [feedback, setFeedback] = useState(null);
   const [results, setResults] = useState([]);
   const [hasListened, setHasListened] = useState(false);
 
+  // Load words: AI-generated or local fallback
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWords() {
+      setLoading(true);
+      setCurrentIndex(0);
+      setResults([]);
+      setFeedback(null);
+      setHasListened(false);
+
+      const mastered = AppStorage.getMasteredWords();
+
+      // Try AI generation when API key is set
+      if (settings.aiApiKey) {
+        const aiWords = await generateAIWords(settings.language, settings.difficulty, ROUND_SIZE, mastered);
+        if (!cancelled && aiWords && aiWords.length > 0) {
+          setWords(aiWords);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Fallback: local words, filtering out mastered
+      if (!cancelled) {
+        const allWords = categories.flatMap(cat =>
+          getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
+        );
+        const available = allWords.filter(w => !mastered.includes(w.word.toLowerCase()));
+        const pool = available.length >= ROUND_SIZE ? available : allWords;
+        setWords(shuffleArray(pool).slice(0, ROUND_SIZE));
+        setLoading(false);
+      }
+    }
+    loadWords();
+    return () => { cancelled = true; };
+  }, [roundKey]);
+
   const currentWord = words[currentIndex];
-  const isRoundComplete = currentIndex >= words.length;
+  const isRoundComplete = !loading && words.length > 0 && currentIndex >= words.length;
 
   const handleListen = () => {
+    if (!currentWord) return;
     speakWord(currentWord.word, settings.language);
     setHasListened(true);
   };
 
   const handleSpeechResult = async (transcript) => {
+    if (!currentWord) return;
     let isCorrect = wordFormsMatch(transcript, currentWord.word);
 
     if (!isCorrect && settings.aiApiKey) {
@@ -874,6 +1138,10 @@ function WordRepeat({ settings, onFinish }) {
 
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     setResults(prev => [...prev, isCorrect]);
+
+    if (isCorrect) {
+      AppStorage.addMasteredWord(currentWord.word);
+    }
 
     const stats = AppStorage.recordAnswer(isCorrect);
     if (settings.soundEnabled) {
@@ -895,6 +1163,18 @@ function WordRepeat({ settings, onFinish }) {
     setCurrentIndex(prev => prev + 1);
   };
 
+  // Loading screen
+  if (loading) {
+    return (
+      <div className="exercise" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="loading-spinner" style={{ fontSize: '2.5rem', marginBottom: '16px', animation: 'spin 1.5s linear infinite' }}>🔄</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>{t.loading}</div>
+        </div>
+      </div>
+    );
+  }
+
   if (isRoundComplete) {
     const score = results.filter(Boolean).length;
     AppStorage.saveSession({
@@ -905,16 +1185,11 @@ function WordRepeat({ settings, onFinish }) {
       language: settings.language,
     });
     return <ResultScreen score={score} total={words.length} onHome={() => onFinish()} onRetry={() => {
-      const allWords = categories.flatMap(cat =>
-        getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
-      );
-      setWords(shuffleArray(allWords).slice(0, ROUND_SIZE));
-      setCurrentIndex(0);
-      setResults([]);
-      setFeedback(null);
-      setHasListened(false);
+      setRoundKey(k => k + 1);
     }} settings={settings} />;
   }
+
+  if (!currentWord) return null;
 
   return (
     <div className="exercise">
@@ -952,7 +1227,14 @@ function WordRepeat({ settings, onFinish }) {
         ) : null}
       </div>
 
-      {feedback && (
+      {feedback === 'checking' && (
+        <div className="feedback" style={{ textAlign: 'center', padding: '20px' }}>
+          <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>🤔</div>
+          <div style={{ color: 'var(--text-muted)' }}>{t.checking}</div>
+        </div>
+      )}
+
+      {feedback && feedback !== 'checking' && (
         <div className={`feedback ${feedback}`}>
           <div className="feedback-icon">{feedback === 'correct' ? '🎉' : '💪'}</div>
           <div className="feedback-text">
