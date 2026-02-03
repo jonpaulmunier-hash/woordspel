@@ -243,36 +243,42 @@ function useSpeechRecognition(lang) {
 // TEXT TO SPEECH
 // ============================================================
 
+// Cache loaded voices globally
+let _cachedVoices = [];
+function _loadVoices() {
+  _cachedVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+}
+if (window.speechSynthesis) {
+  _loadVoices();
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = _loadVoices;
+  }
+}
+
+function _findVoice(langCode) {
+  const voices = _cachedVoices.length > 0 ? _cachedVoices : (window.speechSynthesis ? window.speechSynthesis.getVoices() : []);
+  // Try exact match (e.g. 'nl-NL')
+  let v = voices.find(v => v.lang === langCode);
+  if (v) return v;
+  // Try prefix match (e.g. 'nl')
+  const prefix = langCode.split('-')[0];
+  v = voices.find(v => v.lang.startsWith(prefix));
+  return v || null;
+}
+
 function speakWord(word, lang) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(word);
-  const targetLang = lang === 'nl' ? 'nl' : 'en';
-  utterance.lang = lang === 'nl' ? 'nl-NL' : 'en-US';
+  const langCode = lang === 'nl' ? 'nl-NL' : 'en-US';
+  utterance.lang = langCode;
 
-  // Explicitly find and set a voice matching the target language.
-  // Without this, many browsers ignore the lang property and use the system default.
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length > 0) {
-    const exactMatch = voices.find(v => v.lang.startsWith(targetLang) && !v.name.includes('Google'));
-    const anyMatch = voices.find(v => v.lang.startsWith(targetLang));
-    if (exactMatch) utterance.voice = exactMatch;
-    else if (anyMatch) utterance.voice = anyMatch;
-  }
+  const voice = _findVoice(langCode);
+  if (voice) utterance.voice = voice;
 
   utterance.rate = 0.8;
   utterance.pitch = 1;
   window.speechSynthesis.speak(utterance);
-}
-
-// Preload voices (some browsers load them asynchronously)
-if (window.speechSynthesis) {
-  window.speechSynthesis.getVoices();
-  if (window.speechSynthesis.onvoiceschanged !== undefined) {
-    window.speechSynthesis.onvoiceschanged = () => {
-      window.speechSynthesis.getVoices();
-    };
-  }
 }
 
 // ============================================================
