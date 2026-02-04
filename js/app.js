@@ -284,18 +284,25 @@ Answer ONLY "YES" or "NO".`;
 }
 
 // Search Wikipedia for an image matching a search term
-async function searchWikipediaImage(searchTerm) {
-  try {
-    const url = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json&origin=*&gsrlimit=1`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    const pages = data?.query?.pages;
-    if (!pages) return null;
-    const firstPage = Object.values(pages)[0];
-    return firstPage?.thumbnail?.source || null;
-  } catch (e) {
-    return null;
+async function searchWikipediaImage(searchTerm, lang) {
+  async function tryWiki(wikiLang) {
+    try {
+      const url = `https://${wikiLang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json&origin=*&gsrlimit=1`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const pages = data?.query?.pages;
+      if (!pages) return null;
+      const firstPage = Object.values(pages)[0];
+      return firstPage?.thumbnail?.source || null;
+    } catch (e) {
+      return null;
+    }
   }
+  // Try English first (best image coverage), then Dutch if needed
+  const result = await tryWiki('en');
+  if (result) return result;
+  if (lang === 'nl') return tryWiki('nl');
+  return null;
 }
 
 // Generate random words using Gemini AI
@@ -592,36 +599,55 @@ function HintBar({ word, lang, hintLevel, onRequestHint, maxHints }) {
 }
 
 // --- IMAGE DISPLAY ---
+// Priority: dynamicUrl (AI) > IMAGE_MAP (curated) > Wikipedia search
+// NEVER shows the answer word - that would defeat the exercise
 function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
-  const [wikiUrl, setWikiUrl] = useState(null);
-  const [wikiFetched, setWikiFetched] = useState(false);
-  const [wikiError, setWikiError] = useState(false);
+  const [urls, setUrls] = useState([]);
+  const [urlIndex, setUrlIndex] = useState(0);
   const [loading, setLoading] = useState(false);
+  const map = window.IMAGE_MAP || {};
 
-  // Reset states when word or URL changes
   useEffect(() => {
-    setWikiUrl(null);
-    setWikiFetched(false);
-    setWikiError(false);
-  }, [word, dynamicUrl]);
-
-  // Always fetch from Wikipedia if no dynamicUrl provided
-  useEffect(() => {
-    if (dynamicUrl) return;
-    if (wikiFetched) return;
     let cancelled = false;
-    setLoading(true);
-    searchWikipediaImage(word).then((url) => {
-      if (!cancelled) {
-        setWikiUrl(url);
-        setWikiFetched(true);
+    const mapUrl = map[word];
+    const knownUrls = [];
+    if (dynamicUrl) knownUrls.push(dynamicUrl);
+    if (mapUrl) knownUrls.push(mapUrl);
+
+    // If we already have URLs from props/map, use them immediately
+    // and also kick off a Wikipedia search as backup
+    setUrls(knownUrls);
+    setUrlIndex(0);
+
+    if (knownUrls.length === 0) setLoading(true);
+
+    searchWikipediaImage(word, lang).then((wikiUrl) => {
+      if (!cancelled && wikiUrl) {
+        setUrls(prev => {
+          // Avoid duplicates
+          if (prev.includes(wikiUrl)) return prev;
+          return [...prev, wikiUrl];
+        });
+        setLoading(false);
+      } else if (!cancelled) {
         setLoading(false);
       }
     });
-    return () => { cancelled = true; };
-  }, [word, dynamicUrl, wikiFetched]);
 
-  const finalUrl = dynamicUrl || wikiUrl;
+    return () => { cancelled = true; };
+  }, [word, dynamicUrl, lang]);
+
+  const finalUrl = urls[urlIndex] || null;
+
+  const handleImageError = () => {
+    // Try the next URL in the list
+    if (urlIndex < urls.length - 1) {
+      setUrlIndex(prev => prev + 1);
+    } else {
+      // All URLs failed, clear to show placeholder
+      setUrls([]);
+    }
+  };
 
   if (loading && !finalUrl) {
     return (
@@ -633,10 +659,10 @@ function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
     );
   }
 
-  if (!finalUrl || wikiError) {
+  if (!finalUrl) {
     return (
       <div className="prompt-image-container">
-        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', color: 'var(--text-muted)', padding: '1rem', textAlign: 'center' }}>{word}</div>
+        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'var(--text-muted)' }}>📷</div>
       </div>
     );
   }
@@ -647,7 +673,7 @@ function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
         className="prompt-image"
         src={finalUrl}
         alt=""
-        onError={() => setWikiError(true)}
+        onError={handleImageError}
       />
     </div>
   );
@@ -692,7 +718,7 @@ function PictureNaming({ settings, onFinish }) {
           setLoadingMsg(t.loadingImages);
           // Fetch Wikipedia images in parallel
           const withImages = await Promise.all(aiWords.map(async (w) => {
-            const imgUrl = await searchWikipediaImage(w.imageSearch);
+            const imgUrl = await searchWikipediaImage(w.imageSearch, settings.language);
             return { ...w, imageUrl: imgUrl };
           }));
           if (!cancelled) {
