@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗣️</text></svg>">
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗣️</text></svg>">
-  <link rel="stylesheet" href="css/style.css?v=7">
+  <link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
   <div id="root"></div>
@@ -20,22 +20,22 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!-- Data & utilities (plain JS, no JSX) -->
-  <script src="js/data/words-nl.js?v=7"></script>
-  <script src="js/data/words-en.js?v=7"></script>
-  <script src="js/data/image-map.js?v=7"></script>
-  <script src="js/utils/sounds.js?v=7"></script>
-  <script src="js/utils/confetti.js?v=7"></script>
-  <script src="js/utils/storage.js?v=7"></script>
-  <script src="js/utils/export.js?v=7"></script>
-  <script src="js/utils/images.js?v=7"></script>
+  <script src="js/data/words-nl.js?v=9"></script>
+  <script src="js/data/words-en.js?v=9"></script>
+  <script src="js/data/image-map.js?v=9"></script>
+  <script src="js/utils/sounds.js?v=9"></script>
+  <script src="js/utils/confetti.js?v=9"></script>
+  <script src="js/utils/storage.js?v=9"></script>
+  <script src="js/utils/export.js?v=9"></script>
+  <script src="js/utils/images.js?v=9"></script>
 
   <!-- Main app (JSX, needs Babel) -->
-  <script type="text/babel" src="js/app.js?v=7"></script>
+  <script type="text/babel" src="js/app.js?v=9"></script>
 
   <!-- Register service worker for PWA -->
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js?v=7').catch(() => {});
+      navigator.serviceWorker.register('sw.js?v=9').catch(() => {});
     }
   </script>
 </body>

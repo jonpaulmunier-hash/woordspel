@@ -593,17 +593,50 @@ function HintBar({ word, lang, hintLevel, onRequestHint, maxHints }) {
 
 // --- IMAGE DISPLAY ---
 function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
-  const [imgError, setImgError] = useState(false);
-  const map = window.IMAGE_MAP || {};
-  const finalUrl = dynamicUrl || map[word];
+  const [wikiUrl, setWikiUrl] = useState(null);
+  const [wikiFetched, setWikiFetched] = useState(false);
+  const [wikiError, setWikiError] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Reset error state when word or URL changes
-  useEffect(() => { setImgError(false); }, [word, dynamicUrl]);
+  // Reset states when word or URL changes
+  useEffect(() => {
+    setWikiUrl(null);
+    setWikiFetched(false);
+    setWikiError(false);
+  }, [word, dynamicUrl]);
 
-  if (!finalUrl || imgError) {
+  // Always fetch from Wikipedia if no dynamicUrl provided
+  useEffect(() => {
+    if (dynamicUrl) return;
+    if (wikiFetched) return;
+    let cancelled = false;
+    setLoading(true);
+    searchWikipediaImage(word).then((url) => {
+      if (!cancelled) {
+        setWikiUrl(url);
+        setWikiFetched(true);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [word, dynamicUrl, wikiFetched]);
+
+  const finalUrl = dynamicUrl || wikiUrl;
+
+  if (loading && !finalUrl) {
     return (
       <div className="prompt-image-container">
-        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'var(--text-muted)' }}>?</div>
+        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="listening-pulse" style={{ width: '40px', height: '40px', background: 'var(--primary)' }}></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!finalUrl || wikiError) {
+    return (
+      <div className="prompt-image-container">
+        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', color: 'var(--text-muted)', padding: '1rem', textAlign: 'center' }}>{word}</div>
       </div>
     );
   }
@@ -614,7 +647,7 @@ function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
         className="prompt-image"
         src={finalUrl}
         alt=""
-        onError={() => setImgError(true)}
+        onError={() => setWikiError(true)}
       />
     </div>
   );

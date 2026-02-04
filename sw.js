@@ -1,4 +1,4 @@
-const CACHE_NAME = 'woordspel-v8';
+const CACHE_NAME = 'woordspel-v9';
 const ASSETS = [
   './',
   './index.html',
