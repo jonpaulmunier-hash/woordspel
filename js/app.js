@@ -424,6 +424,7 @@ function getProgressiveHints(word, hintLevel) {
 function useSpeechRecognition(lang) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [alternatives, setAlternatives] = useState([]);
   const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef(null);
 
@@ -443,17 +444,18 @@ function useSpeechRecognition(lang) {
     const recognition = new SpeechRecognition();
     recognition.lang = lang === 'nl' ? 'nl-NL' : 'en-US';
     recognition.interimResults = false;
-    recognition.maxAlternatives = 3;
+    recognition.maxAlternatives = 5;
     recognition.continuous = false;
 
     recognition.onstart = () => setIsListening(true);
     recognition.onresult = (event) => {
-      // Check all alternatives for best match
+      // Collect ALL alternatives from speech recognition
       const results = [];
       for (let i = 0; i < event.results[0].length; i++) {
         results.push(event.results[0][i].transcript.toLowerCase().trim());
       }
-      setTranscript(results[0]); // Use best result
+      setTranscript(results[0]);
+      setAlternatives(results);
     };
     recognition.onerror = () => setIsListening(false);
     recognition.onend = () => setIsListening(false);
@@ -470,9 +472,10 @@ function useSpeechRecognition(lang) {
 
   const resetTranscript = useCallback(() => {
     setTranscript('');
+    setAlternatives([]);
   }, []);
 
-  return { isListening, transcript, isSupported, startListening, stopListening, resetTranscript };
+  return { isListening, transcript, alternatives, isSupported, startListening, stopListening, resetTranscript };
 }
 
 // ============================================================
@@ -523,13 +526,13 @@ function speakWord(word, lang) {
 
 // --- MIC BUTTON ---
 function MicButton({ lang, onResult, disabled }) {
-  const { isListening, transcript, isSupported, startListening, stopListening, resetTranscript } = useSpeechRecognition(lang);
+  const { isListening, transcript, alternatives, isSupported, startListening, stopListening, resetTranscript } = useSpeechRecognition(lang);
   const settings = AppStorage.getSettings();
   const t = TEXTS[settings.language] || TEXTS.nl;
 
   useEffect(() => {
     if (transcript && !isListening) {
-      onResult(transcript);
+      onResult(transcript, alternatives);
       resetTranscript();
     }
   }, [transcript, isListening]);
@@ -589,7 +592,7 @@ function HintBar({ word, lang, hintLevel, onRequestHint, maxHints }) {
 }
 
 // --- IMAGE DISPLAY ---
-function ImageDisplay({ word, emoji, lang, imageUrl: dynamicUrl }) {
+function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
   const [imgError, setImgError] = useState(false);
   const map = window.IMAGE_MAP || {};
   const finalUrl = dynamicUrl || map[word];
@@ -600,7 +603,7 @@ function ImageDisplay({ word, emoji, lang, imageUrl: dynamicUrl }) {
   if (!finalUrl || imgError) {
     return (
       <div className="prompt-image-container">
-        <div className="prompt-emoji">{emoji}</div>
+        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'var(--text-muted)' }}>?</div>
       </div>
     );
   }
@@ -685,12 +688,16 @@ function PictureNaming({ settings, onFinish }) {
   const currentWord = words[currentIndex];
   const isRoundComplete = !loading && words.length > 0 && currentIndex >= words.length;
 
-  const checkAnswer = useCallback(async (answer) => {
+  const checkAnswer = useCallback(async (answer, speechAlts) => {
     if (!answer || feedback || !currentWord) return;
     const allValid = [currentWord.word, ...(currentWord.alts || [])];
-    let isCorrect = allValid.some(valid => wordFormsMatch(answer, valid));
+    // Try primary answer and all speech recognition alternatives
+    const allAttempts = [answer, ...(speechAlts || [])];
+    let isCorrect = allAttempts.some(attempt =>
+      allValid.some(valid => wordFormsMatch(attempt, valid))
+    );
 
-    // If local match fails, try AI check
+    // If local match fails, try AI check (send best transcript)
     if (!isCorrect && settings.aiApiKey) {
       setFeedback('checking');
       const aiResult = await checkAnswerWithAI(answer, currentWord.word, currentWord.alts || [], settings.language, 'picture');
@@ -727,9 +734,9 @@ function PictureNaming({ settings, onFinish }) {
     setCurrentIndex(prev => prev + 1);
   };
 
-  const handleSpeechResult = (transcript) => {
+  const handleSpeechResult = (transcript, alternatives) => {
     setInput(transcript);
-    checkAnswer(transcript);
+    checkAnswer(transcript, alternatives);
   };
 
   // Loading screen
@@ -773,7 +780,7 @@ function PictureNaming({ settings, onFinish }) {
       </div>
 
       <div className="exercise-prompt">
-        <ImageDisplay word={currentWord.word} emoji={currentWord.emoji} lang={settings.language} imageUrl={currentWord.imageUrl} />
+        <ImageDisplay word={currentWord.word} lang={settings.language} imageUrl={currentWord.imageUrl} />
         <div className="prompt-category">{currentWord.category}</div>
         <div className="prompt-text">{t.whatIsThis}</div>
       </div>
@@ -830,7 +837,7 @@ function PictureNaming({ settings, onFinish }) {
           </div>
           {feedback === 'correct' && (
             <div className="feedback-answer" style={{ fontSize: '1.3rem', fontWeight: '700', color: 'var(--text)', marginTop: '4px' }}>
-              {currentWord.emoji} {currentWord.word}
+              {currentWord.word}
             </div>
           )}
           {feedback === 'incorrect' && (
@@ -902,10 +909,13 @@ function SentenceFill({ settings, onFinish }) {
   const currentSentence = sentences[currentIndex];
   const isRoundComplete = !loading && sentences.length > 0 && currentIndex >= sentences.length;
 
-  const checkAnswer = useCallback(async (answer) => {
+  const checkAnswer = useCallback(async (answer, speechAlts) => {
     if (!answer || feedback || !currentSentence) return;
     const allAnswers = [currentSentence.answer, ...(currentSentence.alts || [])];
-    let isCorrect = allAnswers.some(valid => wordFormsMatch(answer, valid));
+    const allAttempts = [answer, ...(speechAlts || [])];
+    let isCorrect = allAttempts.some(attempt =>
+      allAnswers.some(valid => wordFormsMatch(attempt, valid))
+    );
 
     if (!isCorrect && settings.aiApiKey) {
       setFeedback('checking');
@@ -1001,9 +1011,9 @@ function SentenceFill({ settings, onFinish }) {
       {!feedback && (
         <>
           <div className="input-area">
-            <MicButton lang={settings.language} onResult={(transcript) => {
+            <MicButton lang={settings.language} onResult={(transcript, alternatives) => {
               setInput(transcript);
-              checkAnswer(transcript);
+              checkAnswer(transcript, alternatives);
             }} disabled={!!feedback} />
             <span className="or-divider">─── {t.type.split('...')[0]} ───</span>
             <div className="text-input-row">
@@ -1126,9 +1136,11 @@ function WordRepeat({ settings, onFinish }) {
     setHasListened(true);
   };
 
-  const handleSpeechResult = async (transcript) => {
+  const handleSpeechResult = async (transcript, alternatives) => {
     if (!currentWord) return;
-    let isCorrect = wordFormsMatch(transcript, currentWord.word);
+    // Try primary transcript and all speech recognition alternatives
+    const allAttempts = [transcript, ...(alternatives || [])];
+    let isCorrect = allAttempts.some(attempt => wordFormsMatch(attempt, currentWord.word));
 
     if (!isCorrect && settings.aiApiKey) {
       setFeedback('checking');
@@ -1243,7 +1255,7 @@ function WordRepeat({ settings, onFinish }) {
               : t.incorrect}
           </div>
           <div className="feedback-answer" style={{ fontSize: '1.3rem', fontWeight: '700', color: 'var(--text)', marginTop: '8px' }}>
-            {currentWord.emoji} {currentWord.word}
+            {currentWord.word}
           </div>
           {feedback === 'incorrect' && (
             <button onClick={() => speakWord(currentWord.word, settings.language)} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '1rem', marginTop: '8px', textDecoration: 'underline', fontFamily: 'inherit' }}>
