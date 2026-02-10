@@ -283,28 +283,6 @@ Answer ONLY "YES" or "NO".`;
   }
 }
 
-// Search Wikipedia for an image matching a search term
-async function searchWikipediaImage(searchTerm, lang) {
-  async function tryWiki(wikiLang) {
-    try {
-      const url = `https://${wikiLang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json&origin=*&gsrlimit=1`;
-      const resp = await fetch(url);
-      const data = await resp.json();
-      const pages = data?.query?.pages;
-      if (!pages) return null;
-      const firstPage = Object.values(pages)[0];
-      return firstPage?.thumbnail?.source || null;
-    } catch (e) {
-      return null;
-    }
-  }
-  // Try English first (best image coverage), then Dutch if needed
-  const result = await tryWiki('en');
-  if (result) return result;
-  if (lang === 'nl') return tryWiki('nl');
-  return null;
-}
-
 // Generate random words using Gemini AI
 async function generateAIWords(lang, difficulty, count, exclude) {
   const settings = AppStorage.getSettings();
@@ -323,19 +301,19 @@ async function generateAIWords(lang, difficulty, count, exclude) {
 
   const prompt = `Generate ${count} random ${langName} words for a picture-naming word-finding exercise for aphasia therapy.
 Difficulty: ${difficulty} - ${diffDesc}
-Each word MUST be something that can be clearly shown in a single photograph.${excludeList}
+Each word MUST be a concrete, physical object that can be clearly shown in a single photograph.${excludeList}
 
 Return ONLY a JSON array, no markdown, no explanation:
-[{"word":"hond","article":"de","category":"Dieren","emoji":"🐕","imageSearch":"dog"}]
+[{"word":"hond","article":"de","category":"Dieren","emoji":"🐕","imageSearch":"golden retriever dog photo"}]
 
 Rules:
 - "word" is the ${langName} word
 - "article" is "de", "het", or "" (for verbs/adjectives)
 - "category" is a ${langName} category name
 - "emoji" is one relevant emoji
-- "imageSearch" is a simple English word/phrase for finding a photo on Wikipedia
+- "imageSearch" MUST be a specific English phrase (2-4 words) that would find a clear photo of that exact thing. Be descriptive: "red strawberry fruit" not just "red", "tabby cat pet" not just "cat". Never use abstract terms.
 - Mix different categories
-- Only concrete, photographable things`;
+- ONLY concrete, photographable nouns. NO colors, abstract concepts, emotions, or qualities. Every word must be a thing you can point a camera at.`;
 
   try {
     const resp = await fetch(
@@ -599,67 +577,15 @@ function HintBar({ word, lang, hintLevel, onRequestHint, maxHints }) {
 }
 
 // --- IMAGE DISPLAY ---
-// Priority: dynamicUrl (AI) > IMAGE_MAP (curated) > Wikipedia search
-// NEVER shows the answer word - that would defeat the exercise
-function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
-  const [urls, setUrls] = useState([]);
-  const [urlIndex, setUrlIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const map = window.IMAGE_MAP || {};
+// Shows the pre-verified image URL, or emoji/placeholder fallback
+function ImageDisplay({ word, imageUrl }) {
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    const mapUrl = map[word];
-    const knownUrls = [];
-    if (dynamicUrl) knownUrls.push(dynamicUrl);
-    if (mapUrl) knownUrls.push(mapUrl);
+    setFailed(false);
+  }, [word, imageUrl]);
 
-    // If we already have URLs from props/map, use them immediately
-    // and also kick off a Wikipedia search as backup
-    setUrls(knownUrls);
-    setUrlIndex(0);
-
-    if (knownUrls.length === 0) setLoading(true);
-
-    searchWikipediaImage(word, lang).then((wikiUrl) => {
-      if (!cancelled && wikiUrl) {
-        setUrls(prev => {
-          // Avoid duplicates
-          if (prev.includes(wikiUrl)) return prev;
-          return [...prev, wikiUrl];
-        });
-        setLoading(false);
-      } else if (!cancelled) {
-        setLoading(false);
-      }
-    });
-
-    return () => { cancelled = true; };
-  }, [word, dynamicUrl, lang]);
-
-  const finalUrl = urls[urlIndex] || null;
-
-  const handleImageError = () => {
-    // Try the next URL in the list
-    if (urlIndex < urls.length - 1) {
-      setUrlIndex(prev => prev + 1);
-    } else {
-      // All URLs failed, clear to show placeholder
-      setUrls([]);
-    }
-  };
-
-  if (loading && !finalUrl) {
-    return (
-      <div className="prompt-image-container">
-        <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="listening-pulse" style={{ width: '40px', height: '40px', background: 'var(--primary)' }}></div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!finalUrl) {
+  if (!imageUrl || failed) {
     return (
       <div className="prompt-image-container">
         <div style={{ width: '200px', height: '200px', borderRadius: 'var(--radius-md)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'var(--text-muted)' }}>📷</div>
@@ -671,9 +597,9 @@ function ImageDisplay({ word, lang, imageUrl: dynamicUrl }) {
     <div className="prompt-image-container">
       <img
         className="prompt-image"
-        src={finalUrl}
+        src={imageUrl}
         alt=""
-        onError={handleImageError}
+        onError={() => setFailed(true)}
       />
     </div>
   );
@@ -712,32 +638,37 @@ function PictureNaming({ settings, onFinish }) {
       const mastered = AppStorage.getMasteredWords();
 
       // Try AI generation when API key is set
+      let wordList = null;
       if (settings.aiApiKey) {
         const aiWords = await generateAIWords(settings.language, settings.difficulty, ROUND_SIZE, mastered);
         if (!cancelled && aiWords && aiWords.length > 0) {
-          setLoadingMsg(t.loadingImages);
-          // Fetch Wikipedia images in parallel
-          const withImages = await Promise.all(aiWords.map(async (w) => {
-            const imgUrl = await searchWikipediaImage(w.imageSearch, settings.language);
-            return { ...w, imageUrl: imgUrl };
-          }));
-          if (!cancelled) {
-            setWords(withImages);
-            setLoading(false);
-            return;
-          }
+          wordList = aiWords;
         }
       }
 
       // Fallback: local words, filtering out mastered
-      if (!cancelled) {
+      if (!cancelled && !wordList) {
         const allWords = categories.flatMap(cat =>
           getWordsForDifficulty(cat, settings.difficulty).map(w => ({ ...w, category: cat.name }))
         );
         const available = allWords.filter(w => !mastered.includes(w.word.toLowerCase()));
         const pool = available.length >= ROUND_SIZE ? available : allWords;
-        setWords(shuffleArray(pool).slice(0, ROUND_SIZE));
-        setLoading(false);
+        wordList = shuffleArray(pool).slice(0, ROUND_SIZE);
+      }
+
+      // Fetch verified images for all words
+      if (!cancelled && wordList) {
+        setLoadingMsg(t.loadingImages);
+        const withImages = await Promise.all(wordList.map(async (w) => {
+          const imgUrl = await ImageUtils.getVerifiedImageForWord(
+            w.word, w.imageSearch, settings.language, settings.aiApiKey
+          );
+          return { ...w, imageUrl: imgUrl };
+        }));
+        if (!cancelled) {
+          setWords(withImages);
+          setLoading(false);
+        }
       }
     }
     loadWords();
@@ -839,7 +770,7 @@ function PictureNaming({ settings, onFinish }) {
       </div>
 
       <div className="exercise-prompt">
-        <ImageDisplay word={currentWord.word} lang={settings.language} imageUrl={currentWord.imageUrl} />
+        <ImageDisplay word={currentWord.word} imageUrl={currentWord.imageUrl} />
         <div className="prompt-category">{currentWord.category}</div>
         <div className="prompt-text">{t.whatIsThis}</div>
       </div>

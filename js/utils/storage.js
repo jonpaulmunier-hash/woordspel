@@ -5,6 +5,7 @@ window.AppStorage = {
     SESSIONS: 'woordspel_sessions',
     STATS: 'woordspel_stats',
     MASTERED: 'woordspel_mastered',
+    VERIFIED_IMAGES: 'woordspel_verified_images',
   },
 
   // === SETTINGS ===
@@ -136,8 +137,8 @@ window.AppStorage = {
     const w = word.toLowerCase().trim();
     if (!mastered.includes(w)) {
       mastered.push(w);
-      // Keep last 500 max to avoid unbounded growth
-      if (mastered.length > 500) mastered.splice(0, mastered.length - 500);
+      // Keep last 2000 max to avoid unbounded growth
+      if (mastered.length > 2000) mastered.splice(0, mastered.length - 2000);
       localStorage.setItem(this.KEYS.MASTERED, JSON.stringify(mastered));
     }
   },
@@ -146,11 +147,43 @@ window.AppStorage = {
     localStorage.removeItem(this.KEYS.MASTERED);
   },
 
+  // === VERIFIED IMAGE CACHE ===
+  getVerifiedImage(word) {
+    try {
+      const cache = JSON.parse(localStorage.getItem(this.KEYS.VERIFIED_IMAGES)) || {};
+      const entry = cache[word.toLowerCase().trim()];
+      if (!entry) return null;
+      // TTL: 7 days
+      if (Date.now() - entry.ts > 7 * 24 * 60 * 60 * 1000) return null;
+      return entry.url;
+    } catch {
+      return null;
+    }
+  },
+
+  saveVerifiedImage(word, url) {
+    try {
+      const cache = JSON.parse(localStorage.getItem(this.KEYS.VERIFIED_IMAGES)) || {};
+      cache[word.toLowerCase().trim()] = { url, ts: Date.now() };
+      // Keep max 2000 entries
+      const keys = Object.keys(cache);
+      if (keys.length > 2000) {
+        // Remove oldest entries
+        keys.sort((a, b) => cache[a].ts - cache[b].ts);
+        for (let i = 0; i < keys.length - 2000; i++) delete cache[keys[i]];
+      }
+      localStorage.setItem(this.KEYS.VERIFIED_IMAGES, JSON.stringify(cache));
+    } catch {
+      // Storage full or other error, ignore
+    }
+  },
+
   // Clear all data
   clearAll() {
     localStorage.removeItem(this.KEYS.SETTINGS);
     localStorage.removeItem(this.KEYS.SESSIONS);
     localStorage.removeItem(this.KEYS.STATS);
     localStorage.removeItem(this.KEYS.MASTERED);
+    localStorage.removeItem(this.KEYS.VERIFIED_IMAGES);
   },
 };
